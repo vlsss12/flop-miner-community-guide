@@ -1,44 +1,35 @@
-# FLOP GPU miner: an independent operator field guide
+# Run a FLOP GPU miner — step by step
 
-> **Community guide · Devnet · reviewed 5 November 2026.** This is an independent, vendor-neutral guide, not a FLOP Labs release or a promise of earnings. FLOP changes quickly: use the [official miner instructions](https://docs.flop.network/docs/run-miner) and the release pack they link as the final authority before running a command. The [public Testnet page](https://flop.finance/testnet/) still labels Testnet **Draft**; Devnet participation has no rewards or airdrop weight.
+> **Independent community guide · Devnet · checked 5 November 2026.** The [official miner guide](https://docs.flop.network/docs/run-miner) and its release pack are the final authority when commands change. This guide does not promise earnings. The [Testnet page](https://flop.finance/testnet/) still says **Draft**. Devnet activity does not currently count toward an airdrop.
 
-This guide is for someone who will **operate** an NVIDIA GPU host as a FLOP inference miner. It does not recommend where to obtain a machine. The path below ends with a registered, calibrated miner serving a measured model and a reachable session endpoint. Actual paid sessions need separate network admission and a positive settled-work receipt.
+This guide is for someone operating their **own GPU host or full Linux VM**. It does not recommend where to get a machine. The official same-host setup has two services: a **GPU backend** runs the model; a **worker** connects to FLOP, handles calibration and serves sessions.
 
-## The five proof gates
+## The route at a glance
 
-| Gate | What to observe | What it does **not** establish |
-| --- | --- | --- |
-| 1. Host | `nvidia-smi` and a Docker GPU probe both see the GPU | FLOP registration |
-| 2. Model | Backend health reports `model_identity: measured` and the expected model/policy hashes | A live worker |
-| 3. Chain | Miner status reports `registered: true` and active stake | Calibration or earnings |
-| 4. Calibration | On-chain calibration is accepted and the worker reports ready | Public gateway admission |
-| 5. Work | A real session is accepted, verified and finalized with a receipt | Future Testnet allocation by itself |
+1. Check the host and Docker GPU access.
+2. Download and verify the official pack.
+3. Create a miner account and back it up privately.
+4. Configure the model, network and HTTPS endpoint.
+5. Get Devnet sponsorship and registration.
+6. Download and verify the exact model and decode policy.
+7. Start the backend, then the worker.
+8. Confirm calibration and readiness. Confirm **real settled work** separately when public paid sessions open.
 
-Keep a dated, **redacted** record of each gate. A container saying “Up” proves only that its process is running.
+**Important:** `Up` containers ≠ registered miner ≠ calibrated miner ≠ paid work. Stop at the first failed step.
 
-### Route at a glance
+## Before you start
 
-`host + Docker GPU` → `official pack + checksum` → `private miner key + backup` → `sponsorship/registration` → `measured checkpoint + policy` → `backend health` → `worker + HTTPS` → `on-chain calibration` → `real settled session when admission opens`.
+| You need | Practical target |
+| --- | --- |
+| GPU | NVIDIA GPU that fits the chosen model. The draft Testnet recommendation is **16 GB+ VRAM per GPU**; this does not mean every model fits. |
+| Host | Linux full VM or owned host with Docker, Compose, NVIDIA driver and Container Toolkit. A restricted container may not support this setup. |
+| Disk | For the documented small Qwen2.5-0.5B model, plan **60 GB free** for checkpoint and headroom. **100–130 GB total disk** is a comfortable example for OS, images and logs, not a FLOP minimum. Larger models need more. |
+| Network | Reliable outbound HTTPS/WebSocket and a public **HTTPS** hostname or tunnel for sessions. |
+| Time | Keep the host online for calibration and monitor it. Your provider may bill even without jobs. |
 
-If any gate fails, stop at that gate. Do not conceal an unverified model, run a second identity, or mistake Devnet registration for a paid-session receipt.
-
-## 0. Decide whether your host is suitable
-
-| Resource | Practical planning target | Why |
-| --- | --- | --- |
-| GPU | NVIDIA GPU with **16 GB+ VRAM per GPU** for the draft Testnet recommendation | Each model also has its own fit and throughput requirements. Other cards require their own verification. |
-| Host | Owned Linux machine or a **full VM** that permits Docker and NVIDIA GPU passthrough | The current inference miner has a CPU worker and a GPU backend on one host. A restricted container alone may not run Docker correctly. |
-| OS | Recent Ubuntu Linux; follow the selected official pack's supported version | The public installer documentation targets Ubuntu 24.04. Confirm a manual pack's requirements before using another version. |
-| Disk | For the documented Qwen2.5-0.5B path, **60 GB available** for the checkpoint and headroom. A roughly **100–130 GB total volume** is a comfortable planning choice, not a FLOP minimum. | OS, image layers, model files, logs and rollback copies consume extra space. Larger models need much more; a 27B BF16 checkpoint alone is about 55.6 GB. |
-| Network | Reliable outbound HTTPS and WebSocket; a stable public HTTPS name/endpoint for sessions | RPC, model download, mailbox, certificate and endpoint advertisement must work. Keep the backend private. |
-| Operation | Time to monitor the worker and respond to upgrades or failures | Calibration can expire, and unattended work has deadlines. |
-
-**Size by the exact model and release.** The official 16 GB+ figure is a provisional Testnet recommendation, not proof that any 16 GB card can serve every model. Check GPU memory, model files, Docker storage and host-wide capacity-stake rules before committing resources. The host operator, not a GPU listing alone, owns the miner account and registration.
-
-### Read-only preflight on the Linux host
+Run these **read-only** commands on the *Linux GPU host*, not your laptop:
 
 ```bash
-uname -a
 nvidia-smi --query-gpu=name,driver_version,memory.total --format=csv
 docker --version
 docker compose version
@@ -46,117 +37,106 @@ df -h /
 docker info --format '{{json .Runtimes}}'
 ```
 
-After installing the **official NVIDIA Container Toolkit**, confirm GPU access from inside Docker using the probe in [NVIDIA's installation guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). If the Docker GPU probe fails, fix it before downloading the miner images. Record only hardware type and capacity in public troubleshooting posts; omit hostnames, IPs, account identifiers and credentials.
+Then run the GPU-in-container test in [NVIDIA's Container Toolkit guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html). **Continue only when both the host and Docker see the GPU.**
 
-## 1. Establish trusted inputs
+## Step 1 — Get the official pack
 
-1. Open [Official links & verification](https://docs.flop.network/docs/official-links). Follow its links to the [miner documentation](https://docs.flop.network/docs/run-miner), public release pack and [release manifest](https://flop.network/releases.json). Treat social replies, DMs and community repositories as untrusted suggestions.
-2. Confirm the pack is **actually published**, download it from the official URL and verify its **published checksum** before extraction. Read its own `README.md` completely. An unreleased or future-dated pack is not an install instruction.
-3. Pin the pack's CLI, worker and backend image **versions and digests**. Keep one compatible release set; do not use `latest` tags or mix random image versions.
-4. Check the active chain and faucet genesis match through the pack's verification steps. Use the official Devnet RPC, `wss://rpc.devnet.flop.network`; never infer the chain from a website's appearance alone.
+Open [FLOP's miner guide](https://docs.flop.network/docs/run-miner) and follow **Set up with your agent → Public pack**. Download the archive and its README, verify the **published checksum**, then extract it. Read the pack README: filenames, image digests and commands may change.
 
-Do **not** copy someone else's filled `.env`, signer, session key or secret backup. The pack's examples are templates; the values for your host must be generated and verified locally.
+The current [public manual pack](https://flop.network/releases/cli/miner-pack-devnet-ts-20261106/) is published. The separate one-command `install.sh` mentioned in the docs is **not published yet**. Do not run a guessed installer or a social-post script.
 
-## 2. Create and protect the miner identity
+**Done when:** the checksum passes and you have the matching pack README, env template and Compose files.
 
-Follow the pack's **local account/keystore** instructions. The current official procedure creates an sr25519 miner identity and stores its encrypted keystore on the host with restrictive permissions. Make an encrypted offline backup before relying on the host. Keep the keystore password, recovery phrase, session/Ghost keys and tokens outside GitHub, chats, issue comments, screenshots and shell history.
+## Step 2 — Create and protect one miner account
 
-The miner **address is public**; the secret that controls it is not. Never print the signer or mnemonic merely to “check” it. To confirm the intended address, use the pack's address-only command and compare it with the address returned by `miner status`. An SSH key only opens the server; it does **not** control the miner account.
+Follow the pack's instructions to create a **dedicated sr25519 miner account**. Store its signer in a root-owned file with mode `0600`. Make an **encrypted backup off the host** before proceeding. Preserve the same identity and persistent worker state during host moves and upgrades.
 
-When moving hosts, preserve the **same** miner identity and persistent worker state. Do not create a fresh account just because the VM changes. Restore from your encrypted backup only on a trusted machine.
+- The **miner address** is public and safe to use for status checks.
+- The **seed, mnemonic, keystore password and session keys** control access. Never paste them into GitHub, chats, screenshots or support tickets.
+- Your **SSH key** opens the server; it is not the miner wallet key.
+- Never print the signer merely to “check” it. Use the pack's **address-only** command.
 
-## 3. Sponsor and register on Devnet
+**Done when:** you know the public address and have verified your private backup.
 
-Use the official pack's sponsorship procedure and the [official Devnet sponsor](https://faucet.flop.network/sponsor/miner). Sponsorship signs a request with the miner identity, registers the miner and delegates Devnet stake when accepted. At the time of review the documented sponsored path uses a 10% commission. Verify live terms before submitting.
+## Step 3 — Configure the services privately
 
-The currently documented manual pack calls `sudo env SPONSOR_URL=https://faucet.flop.network FLOP_RPC=wss://rpc.devnet.flop.network ./sponsor.sh` **after** creating the private signer. Run that only from a checksum-verified official pack and only after you have confirmed the account address and Devnet genesis.
+Copy the pack's env template to a **private, uncommitted** file. Follow its README to set:
 
-**A 25 FLOP quick-fund grant is different from miner sponsorship.** The former funds a test account; it does not automatically create the delegated capacity stake. Likewise, a `registered: true` status does not mean the worker is calibrated or serving jobs.
+- Release-pinned CLI, worker and backend image **versions and digests**.
+- Devnet RPC (`wss://rpc.devnet.flop.network`) and the **same** registered model, precision and decode policy for backend and worker.
+- Signer path, fresh private inference/session tokens and persistent session key.
+- `SESSION_PUBLIC_HOST`: your HTTPS hostname **without** `https://`.
 
-The sponsor can return `429` when its automatic uncalibrated-miner allowance or daily limit is full. Inspect the [Devnet limits](https://faucet.flop.network/limits), wait as instructed, and retry deliberately; do not run a tight loop. A `503` means a service-side condition may need time or operator attention. If the sponsor has already registered the account, **skip** a second `miner register` transaction and verify the on-chain status instead.
+The backend port stays private; the worker's raw session port stays on loopback. Use the pack's TLS sidecar with working DNS and inbound 80/443, or its own-tunnel path if behind NAT. If a temporary tunnel hostname changes, update it and verify a new endpoint advertisement. Confirm the **Devnet genesis identity** with the pack before signing anything.
 
-Never pay someone for a Devnet stake grant, expose a seed to “support”, or assume an unsolicited direct message is an operator.
+**Done when:** Compose configuration validates and the HTTPS name points to this host. Do not expose backend port 8000 or the raw worker port.
 
-## 4. Fetch and verify the exact model
+## Step 4 — Sponsor and register on Devnet
 
-Choose a model already registered on chain and supported by the current pack. Use the pack's `model fetch` flow, which downloads a checkpoint from registered mirrors and checks its measured root. A mismatch is a **stop condition**: do not substitute an arbitrary model download and relabel it with the expected hash.
+Use the verified pack's `sponsor.sh` as its README directs. The [official sponsor](https://faucet.flop.network/) signs a request from the miner account and, when accepted, **registers it and delegates stake**. The documented default commission is 10%; check live terms first. **Do not run `miner register` again** after successful sponsorship.
 
-The decode-policy JSON must match the hash allowlisted for that model. Use the pack's `decode-policy.sh` resolver and [release manifest](https://flop.network/releases.json); it verifies the policy against finalized chain state. Fill the backend and worker configuration from the same resolved model, revision, precision and policy. Put private API and session tokens in root-owned local files as the official pack directs.
+The faucet's **25 FLOP quick-fund** is different. It gives test tokens to an account but does not create the miner's delegated capacity stake.
 
-For the documented Qwen2.5-0.5B BF16 path, the backend should report a **measured** model identity and matching model/decode-policy hashes. If it merely starts without these checks, Gate 2 is not passed.
+If sponsorship returns **429**, read [live limits](https://faucet.flop.network/limits) and retry only when the reason or retry time permits. **503** can mean a service-side problem; check later or request operator review. Do not retry in a tight loop.
 
-## 5. Expose only the session endpoint
+**Done when:** the official CLI's `miner status --json` shows your expected public address, `registered: true` and active stake.
 
-Start the backend and worker with the **matching Compose files** in the official pack. The backend port is private; the worker session listener stays on loopback and is published through the pack's HTTPS sidecar or a controlled HTTPS tunnel. Configure the public DNS host exactly as the pack specifies. Verify that its signed endpoint advertisement reaches the Devnet mailbox and that the advertised URL resolves externally.
+## Step 5 — Fetch the exact model and policy
 
-An ephemeral tunnel hostname may change after restart. If it changes, update `SESSION_PUBLIC_HOST`, restart the appropriate service and verify a **new** endpoint advertisement. For a long-running miner, prefer stable DNS and the official TLS setup. Do not publish port 8000, put bearer tokens into URLs, or paste tokens into tickets.
+Use the pack's `model fetch` command for a **registered model**. The official small-model example is `Qwen/Qwen2.5-0.5B-Instruct` with BF16. Fetch must reproduce its **registered model root**. A mismatch is a stop condition; do not relabel another download.
 
-For local health checks, follow the pack's authenticated `/health` and `/session/info` probes. A public no-token probe returning **401** can show the route is reachable and access-controlled; it does not demonstrate readiness. The authenticated response must report the expected miner, model and readiness values.
+Leave the decode-policy fields empty initially, then run the pack's `decode-policy.sh` on your private env file. It gets the policy from the [official release manifest](https://flop.network/releases.json) and checks its hash against the chain.
 
-## 6. Allow calibration to finish
+**Done when:** fetch reports the expected verified root and the resolver fills an allowlisted policy/hash.
 
-Keep the worker running while its Ghost enrollment and calibration jobs proceed. Check worker logs for the published Ghost key, model gate, chain connection and session advertisement. Then use the pack's CLI `miner status --json` to confirm **on-chain** registration, active stake and an accepted calibration record. The worker's health and on-chain cap should agree.
+## Step 6 — Start the backend, then the worker
 
-Calibration is measured across the whole host. The official source describes 64 verified jobs over at least 600 finalized blocks, while a deployed Devnet can require different live constants; do not hardcode a deadline or force a result. If jobs are absent, inspect finalized chain progress, worker connectivity, sponsor/bond status and issuer enrollment before changing the account. Calibration can expire and may need renewal after changes to GPU inventory.
+Use the **exact Compose commands from your pack's README**:
 
-At this point the machine is a **calibrated Devnet miner**. The official docs still separate this from public gateway admission and paid sessions. Do not claim revenue or Testnet credit merely from calibration.
+1. Validate Compose and pull the pinned images.
+2. Start **backend**. Its authenticated `/health` must report `model_identity: measured`, the expected model hash, BF16 precision and decode-policy hash.
+3. Start **worker** and the TLS sidecar, or worker alone with your tunnel.
+4. Check worker logs for chain connection, model gate, Ghost-key publication and an HTTPS endpoint advertisement.
+5. Test the endpoint externally. A no-token `401` proves the route is reachable and protected; it does **not** prove readiness.
 
-## 7. Prove work only when the network opens it
+**Done when:** the backend measures the correct model and the worker publishes the current HTTPS endpoint. “Containers Up” is insufficient.
 
-Follow the official [specific-miner request procedure](https://docs.flop.network/docs/run-miner) when its session test is published and the operator has explicitly opened that acceptance path. Check the same model identity, accepted session, proof/DA evidence and a **finalized settlement receipt**. A log line saying “serving” or “endpoint ad published” proves the service is available, not that a buyer used it.
+## Step 7 — Wait for calibration
 
-For Testnet eligibility, use the [official Testnet page](https://flop.finance/testnet/) and future rules when published. The draft says verified compute served counts; idle uptime and self-generated circular activity do not. Devnet work currently has **no reward or airdrop weight**.
+Keep the worker online while the Devnet issuer sends calibration jobs. Check **on-chain** `miner status --json` for registration, active stake and accepted calibration. Compare it with the worker's authenticated `/session/info` result for the same address and model. The live network's job count and time window may differ from examples in docs.
 
-## Daily operation and safe upgrades
+**Done when:** an accepted on-chain calibration exists and the worker reports ready. Calibration can expire or need renewal after a GPU change.
 
-Use the exact Compose command from your pack to check process state and recent logs. The command pattern below follows the **current official manual pack documentation**; confirm these files exist in your checksum-verified pack before running it. With your own tunnel, omit the `docker-compose.tls.yml` file and do not start `tls`:
+## Step 8 — Separate readiness from earnings
 
-```bash
-compose() {
-  docker compose --env-file miner-01.env \
-    -f docker-compose.miner.yml \
-    -f docker-compose.backend.yml \
-    -f docker-compose.tls.yml "$@"
-}
-compose config --quiet
-compose ps
-compose logs --tail=80 worker backend tls
-```
+The [official miner guide](https://docs.flop.network/docs/run-miner) currently says **public paid sessions are not open yet**. A registered, calibrated worker with a reachable endpoint is ready for the next gate; it has **not** proved that a buyer used it. When official admission opens, require an accepted, verified, **finalized settlement receipt** before calling it paid work.
 
-For a **first start**, use the pack's instructions to finish identity and environment setup, run its decode-policy resolver, then bring up `backend` first. Confirm measured model health before starting `worker` and `tls`. The current official manual order is `./decode-policy.sh` → Compose config/pull → backend → authenticated backend health → worker/TLS → authenticated session health → on-chain status. Do not copy this sequence into a different pack without checking its README.
+The [draft Testnet rules](https://flop.finance/testnet/) describe credit for verified compute served, not idle uptime or merely holding test tokens. Do not assume Devnet work counts.
 
-Never paste unredacted logs publicly: they can include host data, signatures, session identifiers or keys. Check disk free space, GPU memory, model-health hashes, finalized RPC progress, worker restart count, calibration validity and the published HTTPS endpoint. Keep the host's security updates and container runtime supported.
+## Fast troubleshooting
 
-Before an upgrade, read the [official upgrade manual](https://docs.flop.network/docs/run-miner), record current pins and healthy gates, drain active work when required, back up the encrypted identity and persistent state, and then update as one compatible release set. Preserve the worker data volume. **Do not run `docker compose down -v`** as a routine restart: it deletes volumes.
-
-### Troubleshooting by failed gate
-
-| Symptom | First checks |
+| Symptom | Check first |
 | --- | --- |
-| Host GPU visible, Docker GPU absent | NVIDIA Container Toolkit, Docker runtime registration, VM GPU passthrough |
-| Backend loops or health has wrong hash | Checkpoint root, model revision, precision, decode-policy JSON/hash, image digest, VRAM |
-| Sponsor says `429` | Official limit and retry guidance; avoid rapid retries |
-| Registered, no calibration | Ghost enrollment, worker logs, finalized blocks, stake/bond, model gate, live calibration constants |
-| Endpoint unreachable | HTTPS certificate/tunnel, current public hostname, signed mailbox ad, worker loopback listener |
-| Session says not ready | Accepted on-chain calibration plus matching measured model and worker state |
-| Worker WebSocket disconnects | RPC reachability, DNS/TLS, host clock and upstream status; reconnect before diagnosing job flow |
-| Containers “Up”, no paid work | Public gateway/paid-session admission may still be closed; ask for a genuine finalized receipt, not only container uptime |
+| GPU works on host, not in Docker | NVIDIA Container Toolkit, Docker runtime, VM passthrough. |
+| Sponsor says 429 | [Live limits](https://faucet.flop.network/limits), reason and retry time. |
+| Registered, no calibration | Worker logs, Ghost enrollment, finalized blocks, stake and model gate. |
+| Backend hash/policy wrong | Checkpoint root, revision, precision, policy JSON/hash and image digests. |
+| WebSocket disconnected | RPC, DNS/TLS, host clock and upstream status. |
+| HTTPS endpoint unreachable | Current hostname, certificate/tunnel, loopback listener and signed endpoint ad. |
+| All services Up, no paid work | Public admission may still be closed. Look for a real finalized receipt. |
 
-## Publish evidence without publishing access
+For daily checks, use the pack's Compose `ps` and recent logs, backend health, on-chain status, calibration validity and the HTTPS endpoint. **Never use `docker compose down -v` as a routine restart**: it removes persistent volumes. Read the [official upgrade instructions](https://docs.flop.network/docs/run-miner) before changing image pins.
 
-Safe public evidence: date, **redacted** GPU model/VRAM, pack version and digest, expected-versus-measured model hash, on-chain `registered`/calibration fields, and a public finalized receipt if one exists. Do not publish the host IP, SSH endpoint, cloud account, private tunnel token, keystore, signer file, `.env`, passwords, session bearer, recovery words, full private logs or personal identity. Redact screenshots before uploading them.
+## Share results without sharing access
 
-## Sources and maintenance
+Useful public details: date, GPU model/VRAM, pack/image versions, **public** model hash, redacted health fields, registration/calibration status and a public finalized receipt if one exists. Hide personal identity, host IP/SSH access, full logs, env files, seeds, keystores, passwords, bearer tokens and backups.
 
-- [Official miner instructions](https://docs.flop.network/docs/run-miner) — current commands, pack and operational gates.
-- [Official links & verification](https://docs.flop.network/docs/official-links) — canonical domains and current token/claim status.
-- [Official Testnet page](https://flop.finance/testnet/) — draft timeline, provisional hardware and what counts.
-- [Official release manifest](https://flop.network/releases.json) — pinned images, models and policies; verify against the chain.
-- [NVIDIA Container Toolkit installation](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html) — Docker GPU setup.
+## Sources and reuse
 
-**Maintenance rule:** if an official release changes a command, hash, network rule or readiness gate, update this guide with a dated note and a source link. The official pack always wins when this guide is stale.
+- [Official FLOP miner guide](https://docs.flop.network/docs/run-miner)
+- [Official links and verification](https://docs.flop.network/docs/official-links)
+- [Official Devnet release pack](https://flop.network/releases/cli/miner-pack-devnet-ts-20261106/)
+- [Official Testnet status and draft rules](https://flop.finance/testnet/)
+- [NVIDIA Container Toolkit guide](https://docs.nvidia.com/datacenter/cloud-native/container-toolkit/latest/install-guide.html)
 
-## Reuse
-
-This independent guide is shared under [Creative Commons Attribution 4.0 International](https://creativecommons.org/licenses/by/4.0/). You may adapt it with attribution and a link to the license. Keep the review date and source links visible so readers can judge whether the instructions are still current.
-
+This independent guide is shared under [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). You may adapt it with attribution. Keep the review date and source links visible because FLOP's commands and network gates can change.
