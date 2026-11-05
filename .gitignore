@@ -1,0 +1,12 @@
+.env
+*.env
+*.gpg
+*.key
+*.json
+!package.json
+signer
+miner-key*
+models/
+worker-data/
+*.log
+.DS_Store
